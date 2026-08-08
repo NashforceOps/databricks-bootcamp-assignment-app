@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Databricks Support System</title>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            margin: 30px; 
+            background: #f8f9fa; 
+            color: #333; 
+        }
+        .container { 
+            max-width: 900px; 
+            margin: 0 auto; 
+        }
+        .card { 
+            background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+            margin-bottom: 20px; 
+        }
+        h1, h2, h3, h4 { color: #111827; }
+        input, select, button { 
+            width: 100%; 
+            padding: 10px; 
+            margin-top: 8px; 
+            margin-bottom: 12px; 
+            border: 1px solid #ccc; 
+            border-radius: 4px; 
+            box-sizing: border-box; 
+        }
+        button { 
+            background: #2563eb; 
+            color: white; 
+            border: none; 
+            font-weight: bold; 
+            cursor: pointer; 
+        }
+        button:hover { background: #1d4ed8; }
+        .ticket-item { 
+            border: 1px solid #e5e7eb; 
+            border-radius: 6px; 
+            padding: 15px; 
+            margin-bottom: 15px; 
+            background: #fff; 
+        }
+        .ticket-header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            border-bottom: 1px solid #eee; 
+            padding-bottom: 8px; 
+        }
+        .badge { 
+            padding: 4px 8px; 
+            border-radius: 4px; 
+            font-size: 12px; 
+            font-weight: bold; 
+            text-transform: uppercase; 
+        }
+        .badge-OPEN { background: #dbeafe; color: #1e40af; }
+        .badge-IN_PROGRESS { background: #fef3c7; color: #92400e; }
+        .badge-RESOLVED { background: #dcfce7; color: #166534; }
+        .msg-box { 
+            background: #f3f4f6; 
+            padding: 10px; 
+            border-radius: 4px; 
+            margin-top: 6px; 
+            font-size: 14px; 
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Databricks Support System</h1>
+    
+    <!-- Ticket Creation Form -->
+    <div class="card">
+        <h2>Create New Ticket</h2>
+        <input type="text" id="newTitle" placeholder="Describe your issue...">
+        <button onclick="createTicket()">Submit Ticket</button>
+    </div>
+
+    <!-- Active Ticket List -->
+    <div class="card">
+        <h2>Active Tickets</h2>
+        <div id="ticketList">Loading tickets from Lakebase...</div>
+    </div>
+</div>
+
+<script>
+// Fetch and render tickets from Go REST API
+async function loadTickets() {
+    try {
+        const res = await fetch('/api/tickets');
+        const tickets = await res.json();
+        const list = document.getElementById('ticketList');
+        
+        if (!tickets || tickets.length === 0) {
+            list.innerHTML = '<p>No tickets found.</p>';
+            return;
+        }
+
+        list.innerHTML = tickets.map(t => `
+            <div class="ticket-item">
+                <div class="ticket-header">
+                    <h3>#${t.id}: ${escapeHtml(t.title)}</h3>
+                    <span class="badge badge-${t.status}">${t.status}</span>
+                </div>
+                
+                <div style="margin: 10px 0;">
+                    <label><strong>Status:</strong> </label>
+                    <select onchange="updateStatus(${t.id}, this.value)" style="width: auto; display: inline-block;">
+                        <option value="OPEN" ${t.status === 'OPEN' ? 'selected' : ''}>OPEN</option>
+                        <option value="IN_PROGRESS" ${t.status === 'IN_PROGRESS' ? 'selected' : ''}>IN_PROGRESS</option>
+                        <option value="RESOLVED" ${t.status === 'RESOLVED' ? 'selected' : ''}>RESOLVED</option>
+                    </select>
+                </div>
+
+                <h4>Messages</h4>
+                ${(t.messages || []).map(m => `
+                    <div class="msg-box">
+                        <strong>${escapeHtml(m.author)}:</strong> ${escapeHtml(m.body)}
+                    </div>
+                `).join('')}
+
+                <div style="margin-top: 10px;">
+                    <input type="text" id="msg-${t.id}" placeholder="Type a reply...">
+                    <button onclick="addMessage(${t.id})" style="width: auto;">Add Message</button>
+                </div>
+            </div>
+        `).join('');
+    } catch (err) {
+        console.error('Error fetching tickets:', err);
+        document.getElementById('ticketList').innerHTML = '<p style="color:red;">Failed to load tickets.</p>';
+    }
+}
+
+// Create a new ticket
+async function createTicket() {
+    const title = document.getElementById('newTitle').value.trim();
+    if (!title) return;
+
+    await fetch('/api/tickets/create', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }) 
+    });
+    
+    document.getElementById('newTitle').value = '';
+    loadTickets();
+}
+
+// Add a message reply to an existing ticket
+async function addMessage(ticketId) {
+    const input = document.getElementById(`msg-${ticketId}`);
+    const body = input.value.trim();
+    if (!body) return;
+
+    await fetch('/api/tickets/message', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticket_id: ticketId, body, author: 'Support Agent' }) 
+    });
+    
+    input.value = '';
+    loadTickets();
+}
+
+// Update status of a ticket
+async function updateStatus(ticketId, status) {
+    await fetch('/api/tickets/status', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticket_id: ticketId, status }) 
+    });
+    loadTickets();
+}
+
+// Helper utility to sanitize text against XSS attacks
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Initial load on page ready
+loadTickets();
+</script>
+</body>
+</html>
