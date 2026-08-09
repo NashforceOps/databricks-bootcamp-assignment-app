@@ -10,7 +10,7 @@ import (
 
 	"databricks-bootcamp-assignment-app/app"
 
-	_ "github.com/lib/pq"
+	_"github.com/lib/pq"
 )
 
 //go:embed db/*.sql
@@ -30,9 +30,9 @@ func getEnv(key, fallback string) string {
 func initDB() (*sql.DB, error) {
 	dbHost := os.Getenv("DB_HOST")
 	dbPort := getEnv("DB_PORT", "5432")
-	dbUser := os.Getenv("DB_USER", "dev-1")
+	dbUser := os.Getenv("DB_USER")
 	dbPassword := os.Getenv("DB_PASSWORD")
-	dbName := os.Getenv("DB_NAME", "databricks-bootcamp-assignment-app")
+	dbName := getEnv("DB_NAME", "databricks-bootcamp-assignment-app")
 	dbSSLMode := getEnv("DB_SSLMODE", "require")
 
 	// If DB_HOST is not present (e.g. local testing without DB), return nil safely

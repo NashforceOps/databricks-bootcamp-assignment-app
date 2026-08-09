@@ -1,3 +1,4 @@
+name: datbricks-support-app
 command:
   - "./support-app"
 
