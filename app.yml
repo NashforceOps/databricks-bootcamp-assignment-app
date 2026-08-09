@@ -13,5 +13,7 @@ env:
     valueFrom: db_user
   - name: DB_NAME
     valueFrom: db_name
+  - name: DB_PASSWORD
+    valueFrom: db_password
   - name: DB_SSLMODE
     value: "require"
