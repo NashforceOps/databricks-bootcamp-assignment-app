@@ -2,82 +2,84 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
+	"embed"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"time"
 
+	"databricks-bootcamp-assignment-app/app"
 
 	_ "github.com/lib/pq"
 )
 
-type Ticket struct{
-	TicketID	int `json:"ticket_id"`
-	Title	string `json:"title"`
-	Status string	`json:"status"`
-	CreatedBy string	`json:"created_at"`
-	CreatedAt time.Time	`json:"created_at"`
-}
+//go:embed db/*.sql
+var dbQueriesFS embed.FS
 
-type Message struct{
-	MessageID int `json:"message_id"`
-	TicketID int 	`json:"ticket_id"`
-	MessageText string 	`json:"message_text"`
-	Author int `json:"author"`
-	CreatedAt time.Time `json:"created_at"` 
-}
-
-var db *sql.DB 
-
-func main() {
-	// Reading database credentials passed via Databricks Secrets in app.yaml
-	dbHost := getEnv("DB_HOST","localhost")
-	dbPort := getEnv("DB_PORT", "5432")
-	dbUser := getEnv("DB_USER", "dev-1")
-	dbPassword := os.getenv("DB_PASSWORD")
-	dbName := getEnv("DB_NAME", "databricks-bootcamp-assignment-app") //TODO: check databricks UI to confirm
-	dbSSLMode := getEnv("DB_SSLMODE", "require")
-
-	connStr = fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode%s",
-			dbHost, dbPort, dbUser dbPassword, dbName, dbSSLMode)
-
-	var err error
-	db, err = sql.Open("postgres",connStr)
-	if err != nil {
-		log.Fatalf("Failed to initialize DB connection %v", err)
-	}
-	defer db.Close()
-
-	if err := db.Ping(); err != nil {
-		log.Printf("Warning: Database ping failed on startup: %v", err)
-	} else {
-		log.Println("Successfully connected to Lakebase Postgres!")
-	}
-
-	// Route Handlers
-	http.HandleFunc("/", handleIndex)
-	http.HandleFunc("/api/tickets", handleGetTickets)
-	http.HandleFunc("/api/tickets/create", handleCreateTicket)
-	http.HandleFunc("/api/tickets/message", handleAddMessage)
-	http.HandleFunc("/api/tickets/status", handleUpdateStatus)
-
-	// Databricks Apps sets PORT dynamically (defaults to 8080 or 8000)
-	port := getEnv("DATABRICKS_APP_PORT", "8080")
-	log.Printf("Starting Support System App on port %s...", port)
-	if err := http.ListenAndServe("0.0.0.0:"+port, nil); err != nil {
-		log.Fatalf("Server failed: %v", err)
-	}
-
-}
-
+//go:embed app/index.html
+var htmlFilesFS embed.FS
 
 func getEnv(key, fallback string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
+	if value, exists := os.LookupEnv(key); exists && value !=""{
+		return value
 	}
 	return fallback
 }
 
+// initDB reads environment variables injected from lakebase_scope and opens a DB connection
+func initDB() (*sql.DB, error) {
+	dbHost := os.Getenv("DB_HOST")
+	dbPort := getEnv("DB_PORT", "5432")
+	dbUser := os.Getenv("DB_USER", "dev-1")
+	dbPassword := os.Getenv("DB_PASSWORD")
+	dbName := os.Getenv("DB_NAME", "databricks-bootcamp-assignment-app")
+	dbSSLMode := getEnv("DB_SSLMODE", "require")
 
+	// If DB_HOST is not present (e.g. local testing without DB), return nil safely
+	if dbHost == "" {
+		log.Println("⚠ DB_HOST variable not set. Running in local/in-memory mode.")
+		return nil, nil
+	}
+
+	// Build PostgreSQL DSN string
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		dbHost, dbPort, dbUser, dbPassword, dbName, dbSSLMode)
+
+	// Initialize database connection handle
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed opening DB handle: %w", err)
+	}
+
+	// Verify DB network connectivity
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed connecting to Lakebase DB (%s:%s): %w", dbHost, dbPort, err)
+	}
+
+	log.Println("Connected to Databricks Lakebase DB successfully!")
+	return db, nil
+}
+
+func main() {
+	db, err := initDB()
+	if err != nil {
+		log.Fatalf("Database connection error: %v", err)
+	}
+	if db != nil {
+		defer db.Close()
+	}
+	server := app.NewServer(dbQueriesFS, htmlFilesFS, db) // pass nil for localhost
+
+	// Register HTTP routes
+	// 1. Static HTML & Health Endpoints
+	http.HandleFunc("/", server.IndexHandler)
+	http.HandleFunc("/health", server.HealthHandler)
+
+
+	// 2. Database-Backed Routes
+	http.HandleFunc("/api/tickets", server.HandleGetTickets)
+	http.HandleFunc("/api/tickets/create", server.HandleCreateTicket)
+	http.HandleFunc("/api/tickets/message", server.HandleAddMessage)
+	http.HandleFunc("/api/tickets/status", server.HandleUpdateStatus)
+
+}
