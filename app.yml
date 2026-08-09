@@ -6,14 +6,14 @@ command:
 
 env:
   - name: DB_HOST
-    value_from: secret:lakebase_scope:db_host
+    valueFrom: secret:lakebase_scope:db_host
   - name: DB_PORT
-    value_from: secret:lakebase_scope:db_port
+    valueFrom: secret:lakebase_scope:db_port
   - name: DB_USER
-    value_from: secret:lakebase_scope:db_user
+    valueFrom: secret:lakebase_scope:db_user
   - name: DB_PASSWORD
-    value_from: secret:lakebase_scope:db_password
+    valueFrom: secret:lakebase_scope:db_password
   - name: DB_NAME
-    value_from: secret:lakebase_scope:db_name
+    valueFrom: secret:lakebase_scope:db_name
   - name: DB_SSLMODE
     value: "require"
