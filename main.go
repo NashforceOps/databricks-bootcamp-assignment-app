@@ -10,7 +10,7 @@ import (
 
 	"databricks-bootcamp-assignment-app/app"
 
-	_"github.com/lib/pq"
+	_ "github.com/lib/pq"
 )
 
 //go:embed db/*.sql
@@ -20,10 +20,19 @@ var dbQueriesFS embed.FS
 var htmlFilesFS embed.FS
 
 func getEnv(key, fallback string) string {
-	if value, exists := os.LookupEnv(key); exists && value !=""{
+	if value, exists := os.LookupEnv(key); exists && value != "" {
 		return value
 	}
 	return fallback
+}
+
+// getAuthToken retrieves the ambient OAuth token automatically provided by Databricks Apps
+func getAuthToken() string {
+	token := os.Getenv("DATABRICKS_TOKEN")
+	if token == "" {
+		log.Println("Warning: DATABRICKS_TOKEN environment variable is not set.")
+	}
+	return token
 }
 
 // initDB reads environment variables injected from lakebase_scope and opens a DB connection
@@ -31,9 +40,9 @@ func initDB() (*sql.DB, error) {
 	dbHost := os.Getenv("DB_HOST")
 	dbPort := getEnv("DB_PORT", "5432")
 	dbUser := os.Getenv("DB_USER")
-	dbPassword := os.Getenv("DB_PASSWORD")
 	dbName := getEnv("DB_NAME", "databricks-bootcamp-assignment-app")
 	dbSSLMode := getEnv("DB_SSLMODE", "require")
+	authToken := getAuthToken()
 
 	// If DB_HOST is not present (e.g. local testing without DB), return nil safely
 	if dbHost == "" {
@@ -43,7 +52,7 @@ func initDB() (*sql.DB, error) {
 
 	// Build PostgreSQL DSN string
 	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		dbHost, dbPort, dbUser, dbPassword, dbName, dbSSLMode)
+		dbHost, dbPort, dbUser, authToken, dbName, dbSSLMode)
 
 	// Initialize database connection handle
 	db, err := sql.Open("postgres", dsn)
@@ -74,7 +83,6 @@ func main() {
 	// 1. Static HTML & Health Endpoints
 	http.HandleFunc("/", server.IndexHandler)
 	http.HandleFunc("/health", server.HealthHandler)
-
 
 	// 2. Database-Backed Routes
 	http.HandleFunc("/api/tickets", server.HandleGetTickets)
