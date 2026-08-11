@@ -65,11 +65,48 @@
         .badge-in_progress { background: #fef3c7; color: #92400e; }
         .badge-resolved { background: #dcfce7; color: #166534; }
         .msg-box { 
+            display: flex;
+            align-items: center;
+            gap: 12px;
             background: #f3f4f6; 
-            padding: 10px; 
+            padding: 8px 10px; 
             border-radius: 4px; 
             margin-top: 6px; 
             font-size: 14px; 
+        }
+        .msg-author {
+            flex: 0 0 130px;
+            font-weight: 600;
+            color: #111827;
+            overflow-wrap: anywhere;
+        }
+        .msg-text {
+            flex: 1;
+            overflow-wrap: anywhere;
+        }
+        .msg-time {
+            flex: 0 0 150px;
+            text-align: right;
+            color: #6b7280;
+            font-size: 12px;
+        }
+        .message-form-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-top: 10px;
+        }
+        .message-form-row input, .message-form-row button {
+            margin: 0;
+            width: auto;
+        }
+        .message-form-row .msg-author-input { flex: 0 0 160px; }
+        .message-form-row .msg-text-input { flex: 1; }
+        .message-form-row button { flex: 0 0 140px; }
+        .error-text {
+            color: #dc2626;
+            font-size: 13px;
+            margin-top: 6px;
         }
         .form-row {
             display: flex;
@@ -128,6 +165,7 @@
             <input type="text" id="newCreatedBy" placeholder="Your name...">
             <button onclick="createTicket()">Submit Ticket</button>
         </div>
+        <p class="error-text" id="createTicketError" style="display:none;"></p>
     </div>
 
     <!-- Active Ticket List -->
@@ -181,16 +219,20 @@ async function loadTickets() {
                     ${messages.length
                         ? messages.map(m => `
                             <div class="msg-box">
-                                <strong>${escapeHtml(m.author)}:</strong> ${escapeHtml(m.message_text)}
+                                <div class="msg-author">${escapeHtml(m.author)}</div>
+                                <div class="msg-text">${escapeHtml(m.message_text)}</div>
+                                <div class="msg-time">${formatDate(m.created_at)}</div>
                             </div>
                         `).join('')
                         : '<p class="no-messages">No messages yet.</p>'
                     }
 
-                    <div style="margin-top: 10px;">
-                        <input type="text" id="msg-${t.ticket_id}" placeholder="Type a reply...">
-                        <button onclick="addMessage(${t.ticket_id})" style="width: auto;">Add Message</button>
+                    <div class="message-form-row">
+                        <input type="text" id="msg-author-${t.ticket_id}" class="msg-author-input" placeholder="Your name" maxlength="15" title="Max 15 characters">
+                        <input type="text" id="msg-text-${t.ticket_id}" class="msg-text-input" placeholder="Type a reply..." maxlength="50" title="Max 50 characters">
+                        <button onclick="addMessage(${t.ticket_id})">Add Message</button>
                     </div>
+                    <p class="error-text" id="msg-error-${t.ticket_id}" style="display:none;"></p>
                 </div>
             </div>
         `;
@@ -219,35 +261,75 @@ async function createTicket() {
     const title = document.getElementById('newTitle').value.trim();
     const createdBy = document.getElementById('newCreatedBy').value.trim();
     const status = document.getElementById('newStatus').value;
+    const errorEl = document.getElementById('createTicketError');
+    if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
     if (!title || !createdBy) return;
 
-    await fetch('/api/tickets/create', { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, created_by: createdBy, status }) 
-    });
-    
-    document.getElementById('newTitle').value = '';
-    document.getElementById('newCreatedBy').value = '';
-    document.getElementById('newStatus').value = 'open';
-    loadTickets();
+    try {
+        const res = await fetch('/api/tickets/create', { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, created_by: createdBy, status }) 
+        });
+
+        if (!res.ok) {
+            const errText = await res.text();
+            if (errorEl) {
+                errorEl.textContent = `Couldn't create ticket: ${errText}`;
+                errorEl.style.display = 'block';
+            }
+            return;
+        }
+
+        document.getElementById('newTitle').value = '';
+        document.getElementById('newCreatedBy').value = '';
+        document.getElementById('newStatus').value = 'open';
+        loadTickets();
+    } catch (err) {
+        if (errorEl) {
+            errorEl.textContent = 'Network error while creating ticket.';
+            errorEl.style.display = 'block';
+        }
+    }
 }
 
 // Add a message reply to an existing ticket
 async function addMessage(ticketId) {
-    const input = document.getElementById(`msg-${ticketId}`);
-    const messageText = input.value.trim();
-    if (!messageText) return;
+    const authorInput = document.getElementById(`msg-author-${ticketId}`);
+    const textInput = document.getElementById(`msg-text-${ticketId}`);
+    const errorEl = document.getElementById(`msg-error-${ticketId}`);
+    if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
 
-    await fetch('/api/tickets/message', { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticket_id: ticketId, message_text: messageText, author: 'Support Agent' }) 
-    });
-    
-    input.value = '';
-    expandedTickets.add(ticketId); // keep the section open so the new reply is visible
-    loadTickets();
+    const author = authorInput.value.trim();
+    const messageText = textInput.value.trim();
+    if (!author || !messageText) return;
+
+    try {
+        const res = await fetch('/api/tickets/message', { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ticket_id: ticketId, message_text: messageText, author }) 
+        });
+
+        if (!res.ok) {
+            const errText = await res.text();
+            if (errorEl) {
+                errorEl.textContent = `Couldn't add message: ${errText}`;
+                errorEl.style.display = 'block';
+            }
+            return;
+        }
+
+        authorInput.value = '';
+        textInput.value = '';
+        expandedTickets.add(ticketId); // keep the section open so the new reply is visible
+        loadTickets();
+    } catch (err) {
+        if (errorEl) {
+            errorEl.textContent = 'Network error while adding message.';
+            errorEl.style.display = 'block';
+        }
+    }
 }
 
 // Update status of a ticket
@@ -258,6 +340,14 @@ async function updateStatus(ticketId, status) {
         body: JSON.stringify({ ticket_id: ticketId, status }) 
     });
     loadTickets();
+}
+
+// Helper utility to format ISO timestamps for display
+function formatDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 // Helper utility to sanitize text against XSS attacks
