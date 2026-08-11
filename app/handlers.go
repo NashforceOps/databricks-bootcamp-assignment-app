@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync"
 	"time"
 )
 
@@ -17,14 +16,9 @@ type Ticket struct {
 	Status    string    `json:"status"` // e.g., "Open", "In Progress", "Closed"
 	CreatedBy string    `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
+	Messages  []Message `json:"messages,omitempty"`
 }
 
-// TicketStore provides thread-safe in-memory storage for tickets.
-type TicketStore struct {
-	mu      sync.RWMutex
-	tickets map[int]Ticket
-	nextID  int
-}
 
 type Message struct {
 	MessageID   int       `json:"message_id"`
@@ -34,62 +28,11 @@ type Message struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// NewTicketStore initializes a new ticket storage instance with sample data.
-func NewTicketStore() *TicketStore {
-	store := &TicketStore{
-		tickets: make(map[int]Ticket),
-		nextID:  1,
-	}
-
-	// Add an initial sample ticket
-	store.CreateTicket("Databricks Pipeline Failure", "Nash")
-	return store
-}
-
-// CreateTicket adds a new ticket to the store safely using a write lock.
-func (s *TicketStore) CreateTicket(title, createdby string) Ticket {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	ticket := Ticket{
-		TicketID:  s.nextID,
-		Title:     title,
-		Status:    "Open",
-		CreatedBy: createdby,
-		CreatedAt: time.Now().UTC(),
-	}
-
-	s.tickets[s.nextID] = ticket
-	s.nextID++
-	return ticket
-}
-
-// GetAllTickets retrieves all tickets safely using a read lock.
-func (s *TicketStore) GetAllTickets() []Ticket {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	list := make([]Ticket, 0, len(s.tickets))
-	for _, t := range s.tickets {
-		list = append(list, t)
-	}
-	return list
-}
-
-// GetTicketByID fetches a single ticket by its integer ID.
-func (s *TicketStore) GetTicketByID(id int) (Ticket, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	ticket, exists := s.tickets[id]
-	return ticket, exists
-}
 
 // Server encapsulates embedded assets and HTTP routing
 type Server struct {
 	DBQueries embed.FS
 	HTMLFiles embed.FS
-	Store     *TicketStore
 	DB        *sql.DB
 }
 
@@ -98,11 +41,9 @@ func NewServer(dbQueries, htmlFiles embed.FS, db *sql.DB) *Server {
 	return &Server{
 		DBQueries: dbQueries,
 		HTMLFiles: htmlFiles,
-		Store:     NewTicketStore(),
 		DB:        db,
 	}
 }
-
 
 // Render the index.html file
 func (s *Server) IndexHandler(w http.ResponseWriter, r *http.Request) {
@@ -123,55 +64,6 @@ func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// // TicketsHandler manages GET (all/single) and POST requests
-// func (s *Server) TicketsHandler(w http.ResponseWriter, r *http.Request) {
-// 	w.Header().Set("Content-Type", "application/json")
-
-// 	switch r.Method {
-// 	case http.MethodGet:
-// 		idStr := r.URL.Query().Get("id")
-// 		if idStr != "" {
-// 			var id int
-// 			if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
-// 				http.Error(w, `{"error":"Invalid ticket ID"}`, http.StatusBadRequest)
-// 				return
-// 			}
-// 			ticket, found := s.Store.GetTicketByID(id)
-// 			if !found {
-// 				http.Error(w, `{"error":"Ticket not found"}`, http.StatusNotFound)
-// 				return
-// 			}
-// 			json.NewEncoder(w).Encode(ticket)
-// 			return
-// 		}
-
-// 		// Return all tickets from server store
-// 		json.NewEncoder(w).Encode(s.Store.GetAllTickets())
-
-// 	case http.MethodPost:
-// 		var input struct {
-// 			Title     string `json:"title"`
-// 			CreatedBy string `json:"created_by"`
-// 		}
-
-// 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-// 			http.Error(w, `{"error":"Invalid JSON payload"}`, http.StatusBadRequest)
-// 			return
-// 		}
-
-// 		if input.Title == "" || input.CreatedBy == "" {
-// 			http.Error(w, `{"error":"Title and CreatedBy required"}`, http.StatusBadRequest)
-// 			return
-// 		}
-
-// 		newTicket := s.Store.CreateTicket(input.Title, input.CreatedBy)
-// 		w.WriteHeader(http.StatusCreated)
-// 		json.NewEncoder(w).Encode(newTicket)
-
-// 	default:
-// 		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
-// 	}
-// }
 
 // GET /api/tickets - Retrieves all tickets along with their messages
 func (s *Server) HandleGetTickets(w http.ResponseWriter, r *http.Request) {
@@ -196,6 +88,13 @@ func (s *Server) HandleGetTickets(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
+	messageBytes, err := s.DBQueries.ReadFile("db/view_msgs.sql")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	msgQuery := string(messageBytes)
+
 	var tickets []Ticket
 	for rows.Next() {
 		var t Ticket
@@ -205,16 +104,16 @@ func (s *Server) HandleGetTickets(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Query associated messages for this specific ticket
-		// msgRows, err := db.Query("SELECT id, ticket_id, author, body, created_at FROM messages WHERE ticket_id = $1 ORDER BY created_at ASC", t.ID)
-		// if err == nil {
-		// 	for msgRows.Next() {
-		// 		var m Message
-		// 		if err := msgRows.Scan(&m.ID, &m.TicketID, &m.Author, &m.Body, &m.CreatedAt); err == nil {
-		// 			t.Messages = append(t.Messages, m)
-		// 		}
-		// 	}
-		// 	msgRows.Close()
-		// }
+		msgRows, err := s.DB.Query(msgQuery, t.TicketID)
+		if err == nil {
+			for msgRows.Next() {
+				var m Message
+				if err := msgRows.Scan(&m.MessageID, &m.TicketID, &m.Author, &m.MessageText, &m.CreatedAt); err == nil {
+					t.Messages = append(t.Messages, m)
+				}
+			}
+			msgRows.Close()
+		}
 		tickets = append(tickets, t)
 	}
 
@@ -231,11 +130,17 @@ func (s *Server) HandleCreateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Title string `json:"title"`
+		Title     string `json:"title"`
+		Status    string `json:"status"`
+		CreatedBy string `json:"created_by"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Title == "" {
 		http.Error(w, "Invalid payload", http.StatusBadRequest)
 		return
+	}
+
+	if req.Status == "" {
+		req.Status = "OPEN"
 	}
 
 	queryBytes, err := s.DBQueries.ReadFile("db/add_tickets.sql")
@@ -253,15 +158,16 @@ func (s *Server) HandleCreateTicket(w http.ResponseWriter, r *http.Request) {
 
 	var ticketID int
 	var createdBy string
+	var status string
 
-	err = s.DB.QueryRow(query).Scan(&ticketID, &createdBy)
+	err = s.DB.QueryRow(query, req.Title, req.Status, req.CreatedBy).Scan(&ticketID, &createdBy, &status)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]interface{}{"ticket": ticketID, "status": "success"})
+	json.NewEncoder(w).Encode(map[string]interface{}{"ticket": ticketID, "status": status, "created_by": createdBy})
 }
 
 // POST /api/tickets/message - Adds a new message reply to a ticket
@@ -275,7 +181,7 @@ func (s *Server) HandleAddMessage(w http.ResponseWriter, r *http.Request) {
 		Author      string `json:"author"`
 		MessageText string `json:"message_text"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TicketID == 0 || req.MessageText == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TicketID == 0 || req.MessageText == "" || req.Author == "" {
 		http.Error(w, "Invalid payload", http.StatusBadRequest)
 		return
 	}
@@ -293,14 +199,23 @@ func (s *Server) HandleAddMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = s.DB.Exec(query, req.TicketID, req.Author, req.MessageText)
+	var messageID int
+	var createdAt time.Time
+
+	err = s.DB.QueryRow(query, req.TicketID, req.Author, req.MessageText).Scan(&messageID, &createdAt)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+	json.NewEncoder(w).Encode(Message{
+		MessageID:   messageID,
+		TicketID:    req.TicketID,
+		Author:      req.Author,
+		MessageText: req.MessageText,
+		CreatedAt:   createdAt,
+	})
 }
 
 // POST /api/tickets/status - Updates a ticket's status (OPEN, IN_PROGRESS, RESOLVED)

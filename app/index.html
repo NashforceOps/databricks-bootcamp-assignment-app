@@ -71,6 +71,41 @@
             margin-top: 6px; 
             font-size: 14px; 
         }
+        .form-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .form-row input, .form-row select, .form-row button {
+            margin: 0;
+            width: auto;
+        }
+        .form-row #newTitle { flex: 2; }
+        .form-row #newStatus { flex: 1; }
+        .form-row #newCreatedBy { flex: 1; }
+        .form-row button { flex: 0 0 160px; }
+        .messages-toggle {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            margin-top: 10px;
+            font-size: 14px;
+            color: #374151;
+            user-select: none;
+        }
+        .messages-toggle .arrow {
+            display: inline-block;
+            font-size: 11px;
+        }
+        .messages-section {
+            margin-top: 8px;
+            padding-left: 4px;
+        }
+        .no-messages {
+            color: #6b7280;
+            font-size: 13px;
+        }
     </style>
 </head>
 <body>
@@ -80,8 +115,16 @@
     <!-- Ticket Creation Form -->
     <div class="card">
         <h2>Create New Ticket</h2>
-        <input type="text" id="newTitle" placeholder="Describe your issue...">
-        <button onclick="createTicket()">Submit Ticket</button>
+        <div class="form-row">
+            <input type="text" id="newTitle" placeholder="Describe your issue...">
+            <select id="newStatus">
+                <option value="OPEN" selected>OPEN</option>
+                <option value="IN_PROGRESS">IN_PROGRESS</option>
+                <option value="RESOLVED">RESOLVED</option>
+            </select>
+            <input type="text" id="newCreatedBy" placeholder="Your name...">
+            <button onclick="createTicket()">Submit Ticket</button>
+        </div>
     </div>
 
     <!-- Active Ticket List -->
@@ -92,6 +135,9 @@
 </div>
 
 <script>
+// Tracks which tickets' message sections are expanded, so state survives a re-render
+const expandedTickets = new Set();
+
 // Fetch and render tickets from Go REST API
 async function loadTickets() {
     try {
@@ -104,69 +150,100 @@ async function loadTickets() {
             return;
         }
 
-        list.innerHTML = tickets.map(t => `
+        list.innerHTML = tickets.map(t => {
+            const isOpen = expandedTickets.has(t.ticket_id);
+            const messages = t.messages || [];
+            return `
             <div class="ticket-item">
                 <div class="ticket-header">
-                    <h3>#${t.id}: ${escapeHtml(t.title)}</h3>
+                    <h3>#${t.ticket_id}: ${escapeHtml(t.title)}</h3>
                     <span class="badge badge-${t.status}">${t.status}</span>
                 </div>
                 
                 <div style="margin: 10px 0;">
                     <label><strong>Status:</strong> </label>
-                    <select onchange="updateStatus(${t.id}, this.value)" style="width: auto; display: inline-block;">
+                    <select onchange="updateStatus(${t.ticket_id}, this.value)" style="width: auto; display: inline-block;">
                         <option value="OPEN" ${t.status === 'OPEN' ? 'selected' : ''}>OPEN</option>
                         <option value="IN_PROGRESS" ${t.status === 'IN_PROGRESS' ? 'selected' : ''}>IN_PROGRESS</option>
                         <option value="RESOLVED" ${t.status === 'RESOLVED' ? 'selected' : ''}>RESOLVED</option>
                     </select>
                 </div>
 
-                <h4>Messages</h4>
-                ${(t.messages || []).map(m => `
-                    <div class="msg-box">
-                        <strong>${escapeHtml(m.author)}:</strong> ${escapeHtml(m.body)}
-                    </div>
-                `).join('')}
+                <div class="messages-toggle" onclick="toggleMessages(${t.ticket_id})">
+                    <span class="arrow" id="arrow-${t.ticket_id}">${isOpen ? '▼' : '▶'}</span>
+                    <strong>Messages (${messages.length})</strong>
+                </div>
 
-                <div style="margin-top: 10px;">
-                    <input type="text" id="msg-${t.id}" placeholder="Type a reply...">
-                    <button onclick="addMessage(${t.id})" style="width: auto;">Add Message</button>
+                <div class="messages-section" id="messages-${t.ticket_id}" style="display: ${isOpen ? 'block' : 'none'};">
+                    ${messages.length
+                        ? messages.map(m => `
+                            <div class="msg-box">
+                                <strong>${escapeHtml(m.author)}:</strong> ${escapeHtml(m.message_text)}
+                            </div>
+                        `).join('')
+                        : '<p class="no-messages">No messages yet.</p>'
+                    }
+
+                    <div style="margin-top: 10px;">
+                        <input type="text" id="msg-${t.ticket_id}" placeholder="Type a reply...">
+                        <button onclick="addMessage(${t.ticket_id})" style="width: auto;">Add Message</button>
+                    </div>
                 </div>
             </div>
-        `).join('');
+        `;
+        }).join('');
     } catch (err) {
         console.error('Error fetching tickets:', err);
         document.getElementById('ticketList').innerHTML = '<p style="color:red;">Failed to load tickets.</p>';
     }
 }
 
+// Expand or collapse a ticket's messages subsection
+function toggleMessages(ticketId) {
+    if (expandedTickets.has(ticketId)) {
+        expandedTickets.delete(ticketId);
+    } else {
+        expandedTickets.add(ticketId);
+    }
+    const section = document.getElementById(`messages-${ticketId}`);
+    const arrow = document.getElementById(`arrow-${ticketId}`);
+    if (section) section.style.display = expandedTickets.has(ticketId) ? 'block' : 'none';
+    if (arrow) arrow.textContent = expandedTickets.has(ticketId) ? '▼' : '▶';
+}
+
 // Create a new ticket
 async function createTicket() {
     const title = document.getElementById('newTitle').value.trim();
-    if (!title) return;
+    const createdBy = document.getElementById('newCreatedBy').value.trim();
+    const status = document.getElementById('newStatus').value;
+    if (!title || !createdBy) return;
 
     await fetch('/api/tickets/create', { 
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title }) 
+        body: JSON.stringify({ title, created_by: createdBy, status }) 
     });
     
     document.getElementById('newTitle').value = '';
+    document.getElementById('newCreatedBy').value = '';
+    document.getElementById('newStatus').value = 'OPEN';
     loadTickets();
 }
 
 // Add a message reply to an existing ticket
 async function addMessage(ticketId) {
     const input = document.getElementById(`msg-${ticketId}`);
-    const body = input.value.trim();
-    if (!body) return;
+    const messageText = input.value.trim();
+    if (!messageText) return;
 
     await fetch('/api/tickets/message', { 
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticket_id: ticketId, body, author: 'Support Agent' }) 
+        body: JSON.stringify({ ticket_id: ticketId, message_text: messageText, author: 'Support Agent' }) 
     });
     
     input.value = '';
+    expandedTickets.add(ticketId); // keep the section open so the new reply is visible
     loadTickets();
 }
 

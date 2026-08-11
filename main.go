@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 
-
 	"databricks-bootcamp-assignment-app/app"
 	_ "github.com/lib/pq"
 )
@@ -25,7 +24,6 @@ func getEnv(key, fallback string) string {
 	}
 	return fallback
 }
-
 
 // initDB reads environment variables injected from lakebase_scope and opens a DB connection
 func initDB() (*sql.DB, error) {
