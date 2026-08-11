@@ -19,7 +19,6 @@ type Ticket struct {
 	Messages  []Message `json:"messages,omitempty"`
 }
 
-
 type Message struct {
 	MessageID   int       `json:"message_id"`
 	TicketID    int       `json:"ticket_id"`
@@ -27,7 +26,6 @@ type Message struct {
 	Author      string    `json:"author"`
 	CreatedAt   time.Time `json:"created_at"`
 }
-
 
 // Server encapsulates embedded assets and HTTP routing
 type Server struct {
@@ -63,7 +61,6 @@ func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 		"service": "Go Support App",
 	})
 }
-
 
 // GET /api/tickets - Retrieves all tickets along with their messages
 func (s *Server) HandleGetTickets(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +137,7 @@ func (s *Server) HandleCreateTicket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Status == "" {
-		req.Status = "OPEN"
+		req.Status = "open"
 	}
 
 	queryBytes, err := s.DBQueries.ReadFile("db/add_tickets.sql")
